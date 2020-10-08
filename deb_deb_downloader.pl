@@ -19,7 +19,8 @@ my %options = (
         arch => undef,
         download_suggested => 0,
         download_recommended => 0,
-        max_depth => 10
+        max_depth => 10,
+        dryrun => 0
 );
 
 sub warn_red (@) {
@@ -49,40 +50,74 @@ sub main {
         }
 }
 
+sub download_virtual_dependency {
+        my $name = shift;
+        debug "download_virtual_dependency($name)";
+
+        my $found_links = 0;
+        my $url = "https://packages.debian.org/de/$options{version}/$name";
+
+        my $site = myget($url);
+
+        while ($site =~ m#<dt><a href="/de/sid/([^"]+)">[^<]+</a></dt>#gism) {
+                my $name = $1;
+                download_dependency($name, $options{arch}, 1);
+                my @dependency_names = get_dependency_names($name);
+                foreach my $this_name (@dependency_names) {
+                        download_dependency($this_name, $options{arch}, 1);
+                }
+                $found_links++;
+        }
+
+        return $found_links;
+}
+
 sub download_dependency {
         my $name = shift;
         my $arch = shift;
-        debug "download_dependency($name, $arch)";
+        my $tried_virtual = shift // 0;
+        debug "download_dependency($name, $arch, $tried_virtual)";
 
         my $url = "https://packages.debian.org/de/$options{version}/$arch/$name/download";
         my $site = myget($url);
         my $dl_url = undef;
-        if($site =~ m#<a href="(http://ftp\.de\.debian\.org/debian/[^"]+.deb)">ftp\.de\.debian\.org/debian</a></li>#) {
+        my $found_links = 0;
+        if(defined $site && $site =~ m#<a href="(http://ftp\.de\.debian\.org/debian/[^"]+.deb)">ftp\.de\.debian\.org/debian</a></li>#) {
                 $dl_url = $1;
+        } elsif(!$tried_virtual && defined $site && $site =~ m#passendes paket gefunden#i) {
+                $found_links = download_virtual_dependency($name);
         } elsif($arch ne 'all') {
-                warn "Did not find any links for $name for the architecture $arch, trying 'all'";
-                return download_dependency($name, 'all');
+                warn "Did not find any links for $name for the architecture $arch ($url), trying 'all'";
+                return download_dependency($name, 'all', $tried_virtual);
         } else {
                 warn_red "Could not find any source for $name for either $options{arch} or 'all'";
                 return undef;
         }
 
-        if(defined($dl_url)) {
-                my $filename = $dl_url;
-                $filename =~ s#.*/##g;
-                my $file_path = "$options{outdir}/$filename";
-                if(!-e $file_path) {
-                        my $command = "wget $dl_url -O $file_path";
-                        debug $command;
-                        system($command);
-                        if($?) {
-                                die "ERROR $?";
+        if(!$found_links) {
+                if(defined($dl_url)) {
+                        my $filename = $dl_url;
+                        $filename =~ s#.*/##g;
+                        my $file_path = "$options{outdir}/$filename";
+                        if(!-e $file_path) {
+                                my $command = "wget $dl_url -O $file_path";
+                                debug $command;
+                                if($options{dryrun}) {
+                                        debug "Enabled dryrun. Not really downloading new stuff";
+                                } else {
+                                        system($command);
+                                        if($?) {
+                                                die "ERROR $?";
+                                        } else {
+                                                warn "OK: successfully downloaded $name for $arch\n";
+                                        }
+                                }
+                        } else {
+                                warn "File $filename already exists in $file_path\n";
                         }
                 } else {
-                        debug "File $filename already exists in $file_path";
+                        warn_red "Could not find download for $name ($arch)";
                 }
-        } else {
-                warn_red "Could not find download for $name ($arch)";
         }
 }
 
@@ -125,6 +160,7 @@ Downloads Debian-dependencies from the website packages.debian.org
 --outdir=dirname                Sets the folder where the downloads should go into
 --download_suggested            Enables downloading suggested packages
 -download_recommended           Enables recommended suggested packages
+--dryrun                        Don't really download packages in the end, only simulate
 EOF
 
         if($exit) {
@@ -144,6 +180,8 @@ sub analyze_args {
                         $options{download_suggested} = 1;
                 } elsif(m#^--download_recommended$#) {
                         $options{download_recommended} = 1;
+                } elsif(m#^--dryrun$#) {
+                        $options{dryrun} = 1;
                 } elsif(m#^--package=(.*)$#) {
                         $options{package} = $1;
                 } elsif(m#^--version=(.*)$#) {
