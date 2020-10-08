@@ -207,18 +207,18 @@ sub analyze_args {
                 $error++;
         }
 
-        if(!defined($options{outdir})) {
-                warn_red "--outdir not defined";
-                $error++;
-        } else {
-                if(!-d $options{outdir}) {
-                        mkdir $options{outdir} || die $!;
-                }
-        }
-
         if(!defined($options{version})) {
                 warn_red "--version not defined";
                 $error++;
+        }
+
+        if(!defined($options{outdir})) {
+                $options{outdir} = "$options{package}-$options{version}-$options{arch}";
+                warn_red "--outdir not defined, using $options{outdir}";
+        }
+
+        if(!-d $options{outdir}) {
+                mkdir $options{outdir} || die $!;
         }
 
 
