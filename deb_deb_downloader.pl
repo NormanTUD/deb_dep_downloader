@@ -11,6 +11,9 @@ use Memoize;
 
 memoize 'download_dependency';
 
+my @valid_arch = qw/alpha amd64 arm64 armel armhf hppa i386 m68k mips64el mipsel ppc64 ppc64el riscv64 s390x sh4 sparc64 x32/;
+my $valid_arches_str = join(', ', @valid_arch);
+
 my %options = (
         debug => 0,
         package => undef,
@@ -20,7 +23,8 @@ my %options = (
         download_suggested => 0,
         download_recommended => 0,
         max_depth => 10,
-        dryrun => 0
+        dryrun => 0,
+        mirror_country => 'de'
 );
 
 sub warn_red (@) {
@@ -82,7 +86,7 @@ sub download_dependency {
         my $site = myget($url);
         my $dl_url = undef;
         my $found_links = 0;
-        if(defined $site && $site =~ m#<a href="(http://ftp\.de\.debian\.org/debian/[^"]+.deb)">ftp\.de\.debian\.org/debian</a></li>#) {
+        if(defined $site && $site =~ m#<a href="(http://ftp\.$options{mirror_country}\.debian\.org/debian/[^"]+.deb)">ftp\.$options{mirror_country}\.debian\.org/debian</a></li>#) {
                 $dl_url = $1;
         } elsif(!$tried_virtual && defined $site && $site =~ m#passendes paket gefunden#i) {
                 $found_links = download_virtual_dependency($name);
@@ -151,16 +155,18 @@ sub get_dependency_names {
 sub _help {
         my $exit = shift // 0;
 
+
         my $str = <<EOF;
 Downloads Debian-dependencies from the website packages.debian.org
 --debug                         Enables Debug-output
 --package=name                  Sets the package name
 --version=version               Sets the debian version (e.g. sid)
---arch=archname                 Sets the architecture
+--arch=archname                 Sets the architecture (valid options: $valid_arches_str)
 --outdir=dirname                Sets the folder where the downloads should go into
 --download_suggested            Enables downloading suggested packages
 -download_recommended           Enables recommended suggested packages
 --dryrun                        Don't really download packages in the end, only simulate
+--mirror_country=de,us,...      Sets the ftp server country to download from (default: de)
 EOF
 
         if($exit) {
@@ -182,6 +188,8 @@ sub analyze_args {
                         $options{download_recommended} = 1;
                 } elsif(m#^--dryrun$#) {
                         $options{dryrun} = 1;
+                } elsif(m#^--mirror_country=(.*)$#) {
+                        $options{mirror_country} = $1;
                 } elsif(m#^--package=(.*)$#) {
                         $options{package} = $1;
                 } elsif(m#^--version=(.*)$#) {
@@ -212,18 +220,26 @@ sub analyze_args {
                 $error++;
         }
 
-        if(!defined($options{outdir})) {
-                $options{outdir} = "$options{package}-$options{version}-$options{arch}";
+
+        if(!grep($_ eq $options{arch}, @valid_arch)) {
+                warn_red "--arch=$options{arch} not valid (valid arches: $valid_arches_str)";
+                $error++;
+        }
+
+        if(!$error && !defined($options{outdir})) {
+                $options{outdir} = "$options{package}/$options{version}/$options{arch}";
+                mkdir $options{package} unless -d $options{package};
+                mkdir "$options{package}/$options{version}/" unless -d "$options{package}/$options{version}/";
+                mkdir $options{outdir} unless -d $options{outdir};
                 warn_red "--outdir not defined, using $options{outdir}";
+        }
+
+        if($error) {
+                _help($error);
         }
 
         if(!-d $options{outdir}) {
                 mkdir $options{outdir} || die $!;
-        }
-
-
-        if($error) {
-                _help($error);
         }
 }
 
